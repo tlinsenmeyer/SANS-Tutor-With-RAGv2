@@ -1,13 +1,13 @@
-# Core LLM + CUDA stack for Blackwell (RTX 5070 requires CUDA 12.8+ / PyTorch Nightly or 2.9+)
---extra-index-url https://download.pytorch.org/whl/nightly/cu128
-torch>=2.7.0.dev
+# Core PyTorch Stack for Blackwell (CUDA 12.8+)
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.7.0
 torchvision>=0.22.0
 torchaudio>=2.7.0
 
-# Inference Engine (compatible with modern runtime environments)
+# Inference Engine
 vllm>=0.7.0
 
-# Multi-agent framework (pinned to stable current minor versions)
+# Multi-agent framework
 langgraph>=0.2.0
 langchain>=0.3.0
 langchain-community>=0.3.0
