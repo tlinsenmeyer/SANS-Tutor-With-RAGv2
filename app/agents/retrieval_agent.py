@@ -1,32 +1,60 @@
+# app/agents/retrieval_agent.py
+
+from typing import Dict, Any, List
 from app.graph.state import TutorState
+from app.llm.vllm_client import VLLMClient
 from app.data.qdrant import search_qdrant
-from typing import List
+from app.data.neo4j import search_neo4j
 
-# Placeholder embedding function — you will replace this with your real embedder
-def embed_text(text: str) -> List[float]:
-    # TODO: Replace with your embedding model (e.g., sentence-transformers, instructor-xl, etc.)
-    return [0.1] * 768  # placeholder vector
+llm = VLLMClient()
 
-def retrieval_agent(state: TutorState) -> TutorState:
+async def retrieval_agent(state: TutorState) -> TutorState:
     """
     Retrieval agent:
     - embeds the user's question
-    - queries Qdrant
-    - stores retrieved docs in state
+    - queries Qdrant (semantic chunks)
+    - queries Neo4j (graph nodes)
+    - merges context into a single string
     """
+
     if not state.question:
         raise ValueError("State.question is empty — cannot perform retrieval.")
 
-    # Embed the question
-    query_vector = embed_text(state.question)
+    # 1. Embed the question via vLLM
+    query_vector = await llm.embed(state.question)
 
-    # Query Qdrant
-    docs = search_qdrant(
-        collection="sans_docs",  # your collection name
+    # 2. Query Qdrant (semantic retrieval)
+    qdrant_results = search_qdrant(
+        collection="sans_docs",
         query_vector=query_vector,
-        limit=5
+        limit=5,
+    )
+    state.retrieved_chunks = qdrant_results
+
+    # 3. Query Neo4j (graph retrieval)
+    graph_results = search_neo4j(
+        query=state.question,
+        limit=10,
+    )
+    state.graph_nodes = graph_results
+
+    # 4. Build merged context
+    chunks_text = "\n\n".join(
+        f"[Chunk {c.get('chunk_index')}] {c.get('text')}"
+        for c in qdrant_results
     )
 
-    # Update state
-    state.retrieved_docs = docs
+    graph_text = "\n\n".join(
+        f"[{g.get('labels')}] {g.get('properties').get('summary', g.get('properties').get('name', ''))}"
+        for g in graph_results
+    )
+
+    merged = []
+    if chunks_text:
+        merged.append("=== Semantic Context (Qdrant) ===\n" + chunks_text)
+    if graph_text:
+        merged.append("=== Graph Context (Neo4j) ===\n" + graph_text)
+
+    state.merged_context = "\n\n".join(merged)
+
     return state

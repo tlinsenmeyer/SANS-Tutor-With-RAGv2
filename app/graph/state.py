@@ -7,14 +7,21 @@ class TutorState(BaseModel):
     user_answer: Optional[str] = None
 
     # Retrieval agent output
-    retrieved_docs: Optional[List[str]] = None
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None   # Qdrant
+    graph_nodes: Optional[List[Dict[str, Any]]] = None         # Neo4j
+    merged_context: Optional[str] = None                       # Combined context
 
     # Tutor agent output
     tutor_response: Optional[str] = None
+    tutor_reasoning: Optional[str] = None
 
-    # Grading agent output
-    grade: Optional[str] = None
-    score: Optional[float] = None
+    # Verification agent output
+    verified_answer: Optional[str] = None
+    corrections: Optional[List[str]] = None
+    additions: Optional[List[str]] = None
+    modern_updates: Optional[List[str]] = None
+    final_answer: Optional[str] = None
+    confidence: Optional[float] = None
 
     # Metadata for orchestration, logging, debugging
     metadata: Dict[str, Any] = {}
