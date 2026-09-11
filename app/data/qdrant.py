@@ -31,4 +31,3 @@ def search_qdrant(collection: str, query_vector: List[float], limit: int = 5) ->
         })
 
     return structured
-
