@@ -33,7 +33,10 @@ class PipelineHandler(FileSystemEventHandler):
             print(f"[WATCHER] New PDF detected: {path.name}")
             ingestion_flow(str(path), str(self.md_dir))
 
-def start_pipeline(pdf_path="./files", md_path="./processed_md"):
+def start_pipeline(
+    pdf_path=str(Path.home() / "Documents" / "files"),
+    md_path=str(Path.home() / "Documents" / "processed_md")
+):
     Path(pdf_path).mkdir(exist_ok=True)
     Path(md_path).mkdir(exist_ok=True)
 
@@ -52,6 +55,7 @@ def start_pipeline(pdf_path="./files", md_path="./processed_md"):
         print("[DAEMON] Stopping watcher.")
 
     observer.join()
+
 
 if __name__ == "__main__":
     start_pipeline()
