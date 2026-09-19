@@ -1,3 +1,5 @@
+
+
 # Web & API Control Plane
 fastapi
 uvicorn
@@ -5,7 +7,7 @@ pydantic
 PyYAML
 
 # LLM Inference & GPU Management
-vllm
+vllm 
 transformers
 
 # Document Parsing & Ingestion

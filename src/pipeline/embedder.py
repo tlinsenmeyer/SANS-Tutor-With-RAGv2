@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class SANSEmbedder:
     """Generates dense vector embeddings for SANS text chunks targeting GPU 1."""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cuda:1"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cuda:0"):
         self.model_name = model_name
         
         # Fallback to CPU safely if GPU 1 isn't present, otherwise bind to cuda:1
