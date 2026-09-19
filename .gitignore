@@ -1,0 +1,12 @@
+/home/tom/projects/SANS-Tutor-With-RAGv2/files
+.venv/
+__pycache__/
+.env
+.uv/
+*.py[cod]
+*.so
+qdrant_storage/
+.vscode/
+.idea/
+*.log
+logs/
