@@ -7,21 +7,34 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-logging.basicConfig(level=logging.INFO)
+# 1. Persistent File and Console Logging Setup
+os.makedirs("logs", exist_ok=True)
+log_file_path = "logs/pipeline.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file_path, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
+
+logging.getLogger("httpx").setLevel(logging.INFO)
 
 from src.pipeline.parser import SANSParser
 from src.pipeline.chunker import SANSChunker
 from src.pipeline.embedder import SANSEmbedder
 from src.pipeline.extractor import SANSEntityExtractor
+from src.pipeline.loader import HybridLoader
 
 class SANSFileHandler(FileSystemEventHandler):
-    """Event handler that orchestrates parsing, chunking, embedding, and entity extraction when a new PDF is dropped."""
+    """Event handler that orchestrates parsing, chunking, embedding, extraction, and database loading."""
     def __init__(self, extractor: SANSEntityExtractor, processed_dir: Path):
         self.extractor = extractor
         self.processed_dir = processed_dir
         self.chunker = SANSChunker(chunk_size=1000, chunk_overlap=200)
-        # Explicitly target cuda:0 since you are running on a single GPU workstation
         self.embedder = SANSEmbedder(model_name="all-MiniLM-L6-v2", device="cuda:0")
 
     def on_created(self, event):
@@ -30,14 +43,13 @@ class SANSFileHandler(FileSystemEventHandler):
 
         file_path = Path(event.src_path)
         
-        # Ignore partial downloads (.filepart) or hidden temp files
         if file_path.suffix == ".filepart" or file_path.name.startswith("."):
             return
 
         logger.info(f"📄 New document detected via Watchdog: {file_path.name}. Beginning full pipeline ingestion...")
 
         try:
-            # Give the file a brief moment to finish writing to disk
+            pipeline_start_time = time.time()
             time.sleep(1.0)
             
             # Step 1: Parse PDF into page-level markdown
@@ -54,12 +66,41 @@ class SANSFileHandler(FileSystemEventHandler):
 
             # Step 4: Run entity extraction and generate audit markdown
             output_md_path = f"output/{file_path.stem}_knowledge.md"
-            self.extractor.process_and_save(embedded_chunks, output_md_path=output_md_path)
+            extraction_results = self.extractor.process_and_save(embedded_chunks, output_md_path=output_md_path)
+            logger.info(f"📁 Audit markdown generated and saved to {output_md_path}")
 
-            # Step 5: Archive source PDF so it isn't processed twice
+            # Step 5: Synchronize with Qdrant and Neo4j databases via HybridLoader
+            logger.info("💾 Synchronizing pipeline outputs to Qdrant and Neo4j databases...")
+            loader = HybridLoader()
+            # Step 6: Archive source PDF so it isn't processed twice
             target_path = self.processed_dir / file_path.name
             file_path.rename(target_path)
+            
+            # Total pipeline elapsed time
+            total_elapsed = time.time() - pipeline_start_time
+            minutes, seconds = divmod(total_elapsed, 60)
+            
             logger.info(f"✅ Successfully processed {file_path.name} and archived to {self.processed_dir}")
+            logger.info(f"🏁 Total pipeline execution time for {file_path.name}: {int(minutes)}m {seconds:.2f}s")
+            logger.info("👀 Ready and waiting for next SANS PDF drop...")
+            try:
+                loader.load_to_qdrant(embedded_chunks)
+                loader.load_to_neo4j(embedded_chunks)
+                loader.load_extracted_knowledge_to_neo4j(extraction_results)
+            finally:
+                loader.close()
+            logger.info("🎯 Database synchronization complete!")
+
+            # Step 6: Archive source PDF so it isn't processed twice
+            target_path = self.processed_dir / file_path.name
+            file_path.rename(target_path)
+            
+            # Total pipeline elapsed time
+            total_elapsed = time.time() - pipeline_start_time
+            minutes, seconds = divmod(total_elapsed, 60)
+            
+            logger.info(f"✅ Successfully processed {file_path.name} and archived to {self.processed_dir}")
+            logger.info(f"🏁 Total pipeline execution time for {file_path.name}: {int(minutes)}m {seconds:.2f}s")
 
         except Exception as e:
             logger.error(f"❌ Error processing pipeline for {file_path.name}: {e}", exc_info=True)
@@ -126,12 +167,27 @@ class PipelineWatcher:
         logger.info("🧹 vLLM container successfully stopped and VRAM released.")
 
     def run(self):
-        """Starts the vLLM server and initiates the watchdog monitoring loop."""
+        """Starts the vLLM server, checks databases, and initiates the watchdog monitoring loop."""
         os.makedirs(self.watch_dir, exist_ok=True)
         os.makedirs(self.processed_dir, exist_ok=True)
         os.makedirs("output", exist_ok=True)
         
+        # 1. Start vLLM
         self._start_vllm_server()
+        
+        # 2. Check Database Connectivity proactively
+        logger.info("🔍 Verifying Qdrant and Neo4j availability...")
+        try:
+            test_loader = HybridLoader()
+            if not test_loader.check_health():
+                raise ConnectionError("Qdrant or Neo4j is not reachable at the configured IPs/ports.")
+            test_loader.close()
+            logger.info("✅ Database connections verified successfully!")
+        except Exception as e:
+            logger.error(f"❌ Database startup check failed: {e}")
+            self._stop_vllm_server()
+            return
+
         extractor = SANSEntityExtractor(model_name=self.model_name)
         
         event_handler = SANSFileHandler(extractor, self.processed_dir)
@@ -140,17 +196,41 @@ class PipelineWatcher:
         
         observer.start()
         logger.info(f"👀 Watchdog active! Monitoring folder [{self.watch_dir}] for incoming SANS PDFs... (Press Ctrl+C to exit)")
-
+        
         try:
-            while observer.is_alive():
+            while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("🛑 Interrupted by user. Stopping watchdog...")
             observer.stop()
+            logger.info("🛑 Interrupted by user. Stopping watchdog...")
         finally:
             observer.join()
             self._stop_vllm_server()
+        
+        # 2. Check Database Connectivity proactively
+        logger.info("🔍 Verifying Qdrant and Neo4j availability...")
+        try:
+            test_loader = HybridLoader()
+            if not test_loader.check_health():
+                raise ConnectionError("Qdrant or Neo4j is not reachable at the configured IPs/ports.")
+            test_loader.close()
+            logger.info("✅ Database connections verified successfully!")
+        except Exception as e:
+            logger.error(f"❌ Database startup check failed: {e}")
+            self._stop_vllm_server()
+            return
 
+        extractor = SANSEntityExtractor(model_name=self.model_name)
+        
+        event_handler = SANSFileHandler(extractor, self.processed_dir)
+        observer = Observer()
+        observer.schedule(event_handler, path=str(self.watch_dir), recursive=False)
+        
+        observer.start()
+        logger.info(f"👀 Watchdog active! Monitoring folder [{self.watch_dir}] for incoming SANS PDFs... (Press Ctrl+C to exit)")
+        # ... rest of run loop ...
+
+# --- Direct Watcher Execution Script (Outside of Functions) ---
 if __name__ == "__main__":
     watcher = PipelineWatcher()
     watcher.run()

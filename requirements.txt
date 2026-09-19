@@ -29,3 +29,4 @@ nemoguardrails
 # Telemetry & Testing
 langfuse
 pytest
+asyncio

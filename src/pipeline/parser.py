@@ -15,13 +15,8 @@ class SANSParser:
         self.pdf_path = pdf_path
 
     def extract_markdown(self) -> List[Dict[Any, Any]]:
-        """
-        Extracts the PDF content into markdown chunks per page, preserving 
-        multi-column formatting, code blocks, and tables.
-        """
         logger.info(f"Extracting markdown from {self.pdf_path} using pymupdf4llm...")
         try:
-            # pymupdf4llm extracts pages as a list of dictionaries with 'text' and metadata
             md_pages = pymupdf4llm.to_markdown(self.pdf_path, page_chunks=True)
             logger.info(f"Successfully extracted {len(md_pages)} pages/chunks from PDF.")
             return md_pages
