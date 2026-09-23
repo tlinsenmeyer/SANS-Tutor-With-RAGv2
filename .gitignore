@@ -1,5 +1,5 @@
-/home/tom/projects/SANS-Tutor-With-RAGv2/files
-/home/tom/projects/SANS-Tutor-With-RAGv2/output
+files/
+output/
 .venv/
 __pycache__/
 .env
