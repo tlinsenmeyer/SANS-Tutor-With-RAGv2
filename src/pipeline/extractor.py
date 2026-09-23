@@ -1,12 +1,13 @@
 import asyncio
-import json
 import logging
 import re
+import json
 import time
-from pathlib import Path
 from typing import List, Dict, Any
+from pathlib import Path
 from openai import AsyncOpenAI
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class SANSEntityExtractor:
@@ -15,19 +16,19 @@ class SANSEntityExtractor:
     def __init__(self, model_name: str, base_url: str = "http://localhost:8000/v1", max_concurrency: int = 4):
         self.model_name = model_name
         self.client = AsyncOpenAI(api_key="not-needed", base_url=base_url)
-        self.semaphore = asyncio.Semaphore(max_concurrency)
+        self.max_concurrency = max_concurrency
+        # No persistent semaphore here to prevent cross-loop errors
 
     def _clean_chunk_text(self, text: str) -> str:
         """Removes common slide deck boilerplate, repeating footers, and copyright noise."""
-        # Strip common SANS footer patterns, copyright notices, and page numbers
         cleaned = re.sub(r"©\s*\d{4}.*?(?:All Rights Reserved|Ed Skoudis|John Strand)", "", text, flags=re.IGNORECASE)
         cleaned = re.sub(r"Tools,\s*Techniques,\s*Exploits,.*?\d+", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"Page\s*\d+", "", cleaned, flags=re.IGNORECASE)
         return cleaned.strip()
 
-    async def _extract_single_chunk(self, chunk: Dict[str, Any]) -> Dict[str, Any]:
-        """Sends a cleaned chunk to vLLM with strict filtering instructions."""
-        async with self.semaphore:
+    async def _extract_single_chunk(self, chunk: Dict[str, Any], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+        """Sends a cleaned chunk to vLLM with strict filtering instructions under the active semaphore."""
+        async with semaphore:
             raw_text = chunk["text"]
             chunk_text = self._clean_chunk_text(raw_text)
             chunk_id = chunk["chunk_id"]
@@ -62,6 +63,9 @@ class SANSEntityExtractor:
                 )
                 
                 content = response.choices[0].message.content
+                if not content:
+                    raise ValueError("Received empty content from model response.")
+                    
                 extracted_data = json.loads(content)
                 
                 return {
@@ -81,18 +85,25 @@ class SANSEntityExtractor:
                 }
 
     async def _process_chunks_async(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        tasks = [self._extract_single_chunk(chunk) for chunk in chunks]
+        # Create a fresh semaphore tied directly to the currently running event loop
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        tasks = [self._extract_single_chunk(chunk, semaphore) for chunk in chunks]
         results = await asyncio.gather(*tasks)
         return results
 
     def process_and_save(self, embedded_chunks: List[Dict[str, Any]], output_md_path: str):
+        if not embedded_chunks:
+            logger.warning("⚠️ No chunks provided to extractor. Skipping extraction.")
+            return []
+
         logger.info(f"🚀 Starting asynchronous LLM entity extraction for {len(embedded_chunks)} chunks with noise filtering...")
         
         start_time = time.time()
         results = asyncio.run(self._process_chunks_async(embedded_chunks))
         elapsed = time.time() - start_time
         
-        logger.info(f"⚡ Extraction batch complete in {elapsed:.2f}s ({elapsed/len(embedded_chunks):.2f}s avg per chunk).")
+        avg_time = elapsed / len(embedded_chunks) if len(embedded_chunks) > 0 else 0
+        logger.info(f"⚡ Extraction batch complete in {elapsed:.2f}s ({avg_time:.2f}s avg per chunk).")
 
         # Compile results into audit markdown
         output_path = Path(output_md_path)
@@ -123,3 +134,4 @@ class SANSEntityExtractor:
                 f.write("\n---\n\n")
 
         logger.info(f"📁 Filtered audit markdown successfully compiled and saved to {output_md_path}")
+        return results
