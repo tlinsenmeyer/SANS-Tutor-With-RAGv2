@@ -11,3 +11,4 @@ qdrant_storage/
 .idea/
 *.log
 logs/
+data/
