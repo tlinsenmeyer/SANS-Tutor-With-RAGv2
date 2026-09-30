@@ -5,6 +5,7 @@ fastapi
 uvicorn
 pydantic
 PyYAML
+python-dotenv
 
 # LLM Inference & GPU Management
 vllm 
