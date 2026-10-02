@@ -19,7 +19,7 @@ class SANSParser:
         try:
             md_pages = pymupdf4llm.to_markdown(self.pdf_path, page_chunks=True)
             logger.info(f"Successfully extracted {len(md_pages)} pages/chunks from PDF.")
-            return md_pages
+            return md_pages # type: ignore[return-value]
         except Exception as e:
             logger.error(f"Failed to parse PDF {self.pdf_path}: {e}")
             raise e
